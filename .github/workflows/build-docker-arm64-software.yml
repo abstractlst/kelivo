@@ -84,18 +84,74 @@ jobs:
           cat > "Kelivo_docker_arm64_software_${VERSION}_run.sh" << 'EOF'
           #!/bin/bash
           set -euo pipefail
-          IMAGE_TAR="$1"
-          shift || true
-          gzip -dc "${IMAGE_TAR}" | docker load
-          IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^kelivo-arm64-software:' | head -n 1)
-          xhost +local:root >/dev/null 2>&1 || true
-          exec docker run --rm \
-            -e DISPLAY="${DISPLAY:-:0}" \
-            -e LIBGL_ALWAYS_SOFTWARE=1 \
-            -e GALLIUM_DRIVER=llvmpipe \
-            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
-            -v /tmp/.X11-unix:/tmp/.X11-unix \
-            "${IMAGE}" "$@"
+
+          CONTAINER_NAME="${KELIVO_CONTAINER_NAME:-kelivo-arm64-software}"
+          IMAGE_REPO="kelivo-arm64-software"
+
+          find_image() {
+            docker images --format '{{.Repository}}:{{.Tag}}' | grep "^${IMAGE_REPO}:" | head -n 1 || true
+          }
+
+          create_container_if_needed() {
+            local image_tar="${1:-}"
+            local image=""
+
+            if docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+              return
+            fi
+
+            image="$(find_image)"
+            if [ -z "${image}" ]; then
+              if [ -z "${image_tar}" ]; then
+                echo "首次运行请传入镜像包:"
+                echo "  $0 Kelivo_docker_arm64_software_*.tar.gz"
+                exit 1
+              fi
+              if [ ! -f "${image_tar}" ]; then
+                echo "镜像包不存在: ${image_tar}"
+                exit 1
+              fi
+              echo "导入镜像: ${image_tar}"
+              gzip -dc "${image_tar}" | docker load
+              image="$(find_image)"
+            fi
+
+            if [ -z "${image}" ]; then
+              echo "未找到 ${IMAGE_REPO} 镜像，导入失败。"
+              exit 1
+            fi
+
+            xhost +local:root >/dev/null 2>&1 || true
+            docker create \
+              --name "${CONTAINER_NAME}" \
+              -e DISPLAY="${DISPLAY:-:0}" \
+              -e LIBGL_ALWAYS_SOFTWARE=1 \
+              -e GALLIUM_DRIVER=llvmpipe \
+              -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+              -v /tmp/.X11-unix:/tmp/.X11-unix \
+              "${image}" >/dev/null
+
+            echo "容器已创建: ${CONTAINER_NAME}"
+            echo "以后可直接运行: docker start ${CONTAINER_NAME}"
+          }
+
+          main() {
+            local image_tar="${1:-}"
+
+            create_container_if_needed "${image_tar}"
+
+            if docker ps --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
+              echo "容器已在运行: ${CONTAINER_NAME}"
+              exit 0
+            fi
+
+            xhost +local:root >/dev/null 2>&1 || true
+            docker start "${CONTAINER_NAME}" >/dev/null
+            echo "已启动 ${CONTAINER_NAME}"
+            echo "关闭 Kelivo 窗口后，容器会自动停止。"
+          }
+
+          main "${1:-}"
           EOF
           chmod +x "Kelivo_docker_arm64_software_${VERSION}_run.sh"
 
