@@ -55,6 +55,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    dbus-x11 \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-good \
     libayatana-appindicator3-1 \

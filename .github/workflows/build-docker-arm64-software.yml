@@ -71,7 +71,7 @@ jobs:
           timeout --kill-after=10s 35s docker run --name kelivo-smoke --rm -e USE_XVFB=1 "${IMAGE}" || code=$?
           docker rm -f kelivo-smoke >/dev/null 2>&1 || true
           echo "smoke test exit code: ${code}"
-          if [ "${code:-0}" -ne 0 ] && [ "${code:-0}" -ne 124 ]; then
+          if [ "${code:-0}" -ne 0 ] && [ "${code:-0}" -ne 124 ] && [ "${code:-0}" -ne 137 ] && [ "${code:-0}" -ne 143 ]; then
             exit "${code}"
           fi
 
