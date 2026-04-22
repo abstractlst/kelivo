@@ -1,0 +1,116 @@
+name: Build Docker ARM64 Software
+
+env:
+  FLUTTER_VERSION: '3.38.4'
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '发布到 Release'
+        required: false
+        default: false
+        type: boolean
+
+      release_tag:
+        description: 'Release 标签（如 v1.0.0）'
+        required: false
+        default: ''
+        type: string
+
+      prerelease:
+        description: '是否为预发布版本 (Pre-release)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  docker-arm64-software:
+    name: 构建 Docker ARM64（软件渲染）
+    runs-on: ubuntu-22.04-arm
+    permissions: write-all
+
+    steps:
+      - name: 📦 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 📝 获取版本号
+        shell: bash
+        run: |
+          set -euxo pipefail
+          RAW_VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
+          VERSION=$RAW_VERSION
+          if [ "${{ github.event.inputs.publish_release }}" != "true" ]; then
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION="${VERSION}_${SHORT_SHA}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_NUMBER=$(echo "$RAW_VERSION" | cut -d'+' -f1)" >> "$GITHUB_ENV"
+
+      - name: 🐳 构建 Docker 镜像
+        shell: bash
+        run: |
+          set -euxo pipefail
+          IMAGE="kelivo-arm64-software:${VERSION}"
+          docker build \
+            --build-arg FLUTTER_VERSION="${FLUTTER_VERSION}" \
+            --build-arg SILICONFLOW_FALLBACK_KEY="${{ secrets.SILICONFLOW_KEY }}" \
+            -f docker/Dockerfile.arm64.software \
+            -t "${IMAGE}" \
+            .
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
+      - name: 🧪 容器启动冒烟测试（Xvfb）
+        shell: bash
+        run: |
+          set -euxo pipefail
+          timeout 25s docker run --rm -e USE_XVFB=1 "${IMAGE}" || code=$?
+          if [ "${code:-0}" -ne 0 ] && [ "${code:-0}" -ne 124 ]; then
+            exit "${code}"
+          fi
+
+      - name: 📦 导出离线镜像包
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TAR_NAME="Kelivo_docker_arm64_software_${VERSION}.tar.gz"
+          docker save "${IMAGE}" | gzip -c > "${TAR_NAME}"
+          cat > "Kelivo_docker_arm64_software_${VERSION}_run.sh" << 'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          IMAGE_TAR="$1"
+          shift || true
+          gzip -dc "${IMAGE_TAR}" | docker load
+          IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^kelivo-arm64-software:' | head -n 1)
+          xhost +local:root >/dev/null 2>&1 || true
+          exec docker run --rm \
+            -e DISPLAY="${DISPLAY:-:0}" \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe \
+            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+            -v /tmp/.X11-unix:/tmp/.X11-unix \
+            "${IMAGE}" "$@"
+          EOF
+          chmod +x "Kelivo_docker_arm64_software_${VERSION}_run.sh"
+
+      - name: 🚀 发布到 Release
+        if: ${{ github.event.inputs.publish_release == 'true' && github.event.inputs.release_tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: ${{ github.event.inputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: |
+            Kelivo_docker_arm64_software_*.tar.gz
+            Kelivo_docker_arm64_software_*_run.sh
+
+      - name: 📤 上传构建产物（Docker）
+        uses: actions/upload-artifact@v4
+        with:
+          name: Docker-ARM64-Software
+          path: |
+            Kelivo_docker_arm64_software_*.tar.gz
+            Kelivo_docker_arm64_software_*_run.sh
