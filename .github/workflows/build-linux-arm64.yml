@@ -111,7 +111,8 @@ jobs:
           should_skip_dep() {
             local dep="$1"
             case "$dep" in
-              */ld-linux-aarch64.so.1|*/libc.so.*|*/libpthread.so.*|*/libdl.so.*|*/librt.so.*|*/libm.so.*|*/libresolv.so.*|*/libnss_*.so.*|*/libutil.so.*|*/libanl.so.*|*/libBrokenLocale.so.*)
+              */ld-linux-aarch64.so.1|*/libc.so.*|*/libpthread.so.*|*/libdl.so.*|*/librt.so.*|*/libm.so.*|*/libresolv.so.*|*/libnss_*.so.*|*/libutil.so.*|*/libanl.so.*|*/libBrokenLocale.so.*|\
+              */libEGL.so.*|*/libGLESv2.so.*|*/libGLESv1_CM.so.*|*/libGL.so.*|*/libGLX.so.*|*/libOpenGL.so.*|*/libGLdispatch.so.*|*/libgbm.so.*|*/libdrm.so.*|*/libvulkan.so.*)
                 return 0
                 ;;
               *)
