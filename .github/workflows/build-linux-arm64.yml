@@ -437,6 +437,7 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.release_tag }}
           name: ${{ github.event.inputs.release_tag }}
+          target_commitish: ${{ github.sha }}
           prerelease: ${{ github.event.inputs.prerelease }}
           files: |
             Kelivo_linux_*_arm64.tar.gz
