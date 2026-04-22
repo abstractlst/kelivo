@@ -49,11 +49,26 @@ jobs:
             libunwind-dev
 
       - name: 🐦 安装 Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          FLUTTER_DIR="$HOME/flutter"
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$FLUTTER_DIR"
+
+          # Prefer the configured tag if it exists; otherwise keep stable HEAD.
+          if [ -n "${FLUTTER_VERSION:-}" ] && git -C "$FLUTTER_DIR" ls-remote --tags --refs origin "refs/tags/${FLUTTER_VERSION}" | grep -q .; then
+            git -C "$FLUTTER_DIR" fetch --depth 1 origin "refs/tags/${FLUTTER_VERSION}:refs/tags/${FLUTTER_VERSION}"
+            git -C "$FLUTTER_DIR" checkout "${FLUTTER_VERSION}"
+          fi
+
+          echo "$FLUTTER_DIR/bin" >> "$GITHUB_PATH"
+          echo "$FLUTTER_DIR/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
+
+          "$FLUTTER_DIR/bin/flutter" --disable-analytics
+          "$FLUTTER_DIR/bin/flutter" config --enable-linux-desktop
+          "$FLUTTER_DIR/bin/flutter" precache --linux
+          "$FLUTTER_DIR/bin/flutter" --version
 
       - name: 📝 Inject fallback
         shell: bash
