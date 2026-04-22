@@ -142,8 +142,12 @@ jobs:
           install -Dm644 "$ICON_SOURCE" AppDir/kelivo.png
           install -Dm644 "$ICON_SOURCE" "AppDir/usr/share/icons/hicolor/256x256/apps/kelivo.png"
 
+          # 调试：输出 AppDir 内 ELF 文件架构
+          echo "== ELF files in AppDir =="
+          find AppDir -type f -print0 | xargs -0 file | grep -E 'ELF|executable|shared object' || true
+
           # 构建 AppImage
-          ARCH=aarch64 ./appimagetool AppDir Kelivo_linux_${VERSION}_arm64.AppImage
+          ARCH=arm_aarch64 ./appimagetool AppDir Kelivo_linux_${VERSION}_arm64.AppImage
 
       - name: 📦 创建 DEB 包
         run: |
