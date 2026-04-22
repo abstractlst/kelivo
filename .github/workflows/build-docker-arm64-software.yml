@@ -67,7 +67,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          timeout 25s docker run --rm -e USE_XVFB=1 "${IMAGE}" || code=$?
+          code=0
+          timeout --kill-after=10s 35s docker run --name kelivo-smoke --rm -e USE_XVFB=1 "${IMAGE}" || code=$?
+          docker rm -f kelivo-smoke >/dev/null 2>&1 || true
+          echo "smoke test exit code: ${code}"
           if [ "${code:-0}" -ne 0 ] && [ "${code:-0}" -ne 124 ]; then
             exit "${code}"
           fi
