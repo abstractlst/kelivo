@@ -53,7 +53,8 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          IMAGE="kelivo-arm64-software:${VERSION}"
+          DOCKER_TAG=$(echo "${VERSION}" | tr '+' '-' | tr '/' '-')
+          IMAGE="kelivo-arm64-software:${DOCKER_TAG}"
           docker build \
             --build-arg FLUTTER_VERSION="${FLUTTER_VERSION}" \
             --build-arg SILICONFLOW_FALLBACK_KEY="${{ secrets.SILICONFLOW_KEY }}" \
