@@ -64,6 +64,27 @@ Thanks to [siliconflow.cn](https://siliconflow.cn) for providing free models in 
 - ✅ macOS
 - ✅ Linux
 
+## 🐳 Docker (ARM64 Software Rendering)
+
+This repository includes a `Build Docker ARM64 Software` workflow that produces offline artifacts:
+
+- `Kelivo_docker_arm64_software_<version>.tar.gz`
+- `Kelivo_docker_arm64_software_<version>_run.sh`
+
+Typical run flow (Docker already installed on target host):
+
+```bash
+gzip -dc Kelivo_docker_arm64_software_<version>.tar.gz | docker load
+xhost +local:root
+docker run --rm \
+  -e DISPLAY=$DISPLAY \
+  -e LIBGL_ALWAYS_SOFTWARE=1 \
+  -e GALLIUM_DRIVER=llvmpipe \
+  -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  kelivo-arm64-software:<version>
+```
+
 ## 🤝 Contribution Guide
 
 Pull Requests and Issues are welcome!

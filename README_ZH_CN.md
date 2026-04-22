@@ -64,6 +64,27 @@
 - ✅ macOS
 - ✅ Linux
 
+## 🐳 Docker（ARM64 软件渲染）
+
+仓库包含 `Build Docker ARM64 Software` 工作流，可生成离线镜像包：
+
+- `Kelivo_docker_arm64_software_<version>.tar.gz`
+- `Kelivo_docker_arm64_software_<version>_run.sh`
+
+常用运行方式（目标机已安装 Docker）：
+
+```bash
+gzip -dc Kelivo_docker_arm64_software_<version>.tar.gz | docker load
+xhost +local:root
+docker run --rm \
+  -e DISPLAY=$DISPLAY \
+  -e LIBGL_ALWAYS_SOFTWARE=1 \
+  -e GALLIUM_DRIVER=llvmpipe \
+  -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  kelivo-arm64-software:<version>
+```
+
 ## 🤝 贡献指南
 
 欢迎提交 Pull Request 或创建 Issue！

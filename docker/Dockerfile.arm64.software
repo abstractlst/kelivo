@@ -1,0 +1,93 @@
+FROM ubuntu:22.04 AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG FLUTTER_VERSION=3.38.4
+ARG SILICONFLOW_FALLBACK_KEY=
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    clang \
+    cmake \
+    curl \
+    file \
+    git \
+    libayatana-appindicator3-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer1.0-dev \
+    libgtk-3-dev \
+    libkeybinder-3.0-dev \
+    libunwind-dev \
+    ninja-build \
+    pkg-config \
+    unzip \
+    xz-utils \
+    zip \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV FLUTTER_DIR=/opt/flutter
+RUN git clone https://github.com/flutter/flutter.git -b stable --depth 1 "${FLUTTER_DIR}" \
+  && if [ -n "${FLUTTER_VERSION}" ] && git -C "${FLUTTER_DIR}" ls-remote --tags --refs origin "refs/tags/${FLUTTER_VERSION}" | grep -q .; then \
+       git -C "${FLUTTER_DIR}" fetch --depth 1 origin "refs/tags/${FLUTTER_VERSION}:refs/tags/${FLUTTER_VERSION}" \
+       && git -C "${FLUTTER_DIR}" checkout "${FLUTTER_VERSION}"; \
+     fi \
+  && "${FLUTTER_DIR}/bin/flutter" --disable-analytics \
+  && "${FLUTTER_DIR}/bin/flutter" config --enable-linux-desktop \
+  && "${FLUTTER_DIR}/bin/flutter" precache --linux
+
+ENV PATH="${FLUTTER_DIR}/bin:${FLUTTER_DIR}/bin/cache/dart-sdk/bin:${PATH}"
+
+WORKDIR /src
+COPY . /src
+
+RUN mkdir -p lib/secrets \
+  && printf "const String siliconflowFallbackKey = '%s';\n" "${SILICONFLOW_FALLBACK_KEY}" > lib/secrets/fallback.dart \
+  && flutter pub get \
+  && flutter build linux --release
+
+
+FROM ubuntu:22.04 AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-good \
+    libegl1 \
+    libgbm1 \
+    libglib2.0-0 \
+    libglu1-mesa \
+    libglx-mesa0 \
+    libgstreamer-plugins-base1.0-0 \
+    libgstreamer1.0-0 \
+    libgtk-3-0 \
+    libopengl0 \
+    libstdc++6 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxkbcommon-x11-0 \
+    libxkbcommon0 \
+    libxrandr2 \
+    libxrender1 \
+    mesa-utils \
+    mesa-vulkan-drivers \
+    xvfb \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/kelivo
+COPY --from=builder /src/build/linux/arm64/release/bundle/ /opt/kelivo/
+COPY docker/entrypoint-software.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh /opt/kelivo/kelivo
+
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV GALLIUM_DRIVER=llvmpipe
+ENV MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+ENV QT_X11_NO_MITSHM=1
+ENV NO_AT_BRIDGE=1
+ENV PATH="/opt/kelivo:${PATH}"
+
+ENTRYPOINT ["/entrypoint.sh"]
