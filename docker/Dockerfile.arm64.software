@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libkeybinder-3.0-dev \
     libunwind-dev \
     lld \
+    llvm-14 \
+    llvm-14-tools \
     ninja-build \
     pkg-config \
     unzip \
