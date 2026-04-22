@@ -46,7 +46,7 @@ jobs:
             gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
             rpm patchelf libfuse2 file \
             libkeybinder-3.0-dev libayatana-appindicator3-dev \
-            libunwind-dev
+            libunwind-dev libglib2.0-bin libgdk-pixbuf2.0-bin
 
       - name: 🐦 安装 Flutter
         shell: bash
@@ -99,7 +99,79 @@ jobs:
           tar -czf ../../../../../Kelivo_linux_${VERSION}_arm64.tar.gz .
 
       - name: 📦 创建 AppImage
+        shell: bash
         run: |
+          set -euxo pipefail
+
+          list_elf_files() {
+            local root="$1"
+            find "$root" -type f -print0 | xargs -0r file | awk -F: '/ELF/ {print $1}'
+          }
+
+          should_skip_dep() {
+            local dep="$1"
+            case "$dep" in
+              */ld-linux-aarch64.so.1|*/libc.so.*|*/libpthread.so.*|*/libdl.so.*|*/librt.so.*|*/libm.so.*|*/libresolv.so.*|*/libnss_*.so.*|*/libutil.so.*|*/libanl.so.*|*/libBrokenLocale.so.*)
+                return 0
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+
+          copy_one_dep() {
+            local dep="$1"
+            local real_dep soname real_name dest_real dest_soname
+            real_dep="$(readlink -f "$dep" || true)"
+            [ -n "$real_dep" ] || return 0
+            [ -f "$real_dep" ] || return 0
+            should_skip_dep "$real_dep" && return 0
+
+            soname="$(basename "$dep")"
+            real_name="$(basename "$real_dep")"
+            dest_real="AppDir/usr/lib/${real_name}"
+            dest_soname="AppDir/usr/lib/${soname}"
+
+            if [ ! -f "$dest_real" ]; then
+              cp -L "$real_dep" "$dest_real"
+              chmod 755 "$dest_real" || true
+              echo "$dest_real"
+            fi
+
+            if [ "$soname" != "$real_name" ] && [ ! -e "$dest_soname" ]; then
+              ln -s "$real_name" "$dest_soname"
+            fi
+          }
+
+          bundle_closure_deps() {
+            local start_root="$1"
+            local -a queue=()
+            local current dep copied
+            declare -A scanned=()
+
+            while IFS= read -r f; do
+              queue+=("$f")
+            done < <(list_elf_files "$start_root")
+
+            while [ "${#queue[@]}" -gt 0 ]; do
+              current="${queue[0]}"
+              queue=("${queue[@]:1}")
+              if [ -n "${scanned[$current]:-}" ]; then
+                continue
+              fi
+              scanned["$current"]=1
+
+              while IFS= read -r dep; do
+                [ -n "$dep" ] || continue
+                copied="$(copy_one_dep "$dep" || true)"
+                if [ -n "$copied" ]; then
+                  queue+=("$copied")
+                fi
+              done < <(ldd "$current" 2>/dev/null | awk '/=>/ {print $3} /^[[:space:]]*\/[^[:space:]]+/ {print $1}' | grep '^/' || true)
+            done
+          }
+
           # 下载 ARM64 版本的 appimagetool
           wget -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage"
           chmod +x appimagetool
@@ -107,16 +179,63 @@ jobs:
           # 创建 AppDir 结构
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/lib
+          mkdir -p AppDir/usr/share
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           cp -r build/linux/arm64/release/bundle/* AppDir/usr/bin/
+
+          # 复制常见 GTK/GIO 运行时资源，提升“基础系统”兼容性
+          if [ -d /usr/lib/aarch64-linux-gnu/gio/modules ]; then
+            mkdir -p AppDir/usr/lib/gio
+            cp -a /usr/lib/aarch64-linux-gnu/gio/modules AppDir/usr/lib/gio/
+          fi
+          if [ -d /usr/lib/aarch64-linux-gnu/gtk-3.0 ]; then
+            cp -a /usr/lib/aarch64-linux-gnu/gtk-3.0 AppDir/usr/lib/
+          fi
+          if [ -d /usr/lib/aarch64-linux-gnu/gdk-pixbuf-2.0 ]; then
+            cp -a /usr/lib/aarch64-linux-gnu/gdk-pixbuf-2.0 AppDir/usr/lib/
+          fi
+          if [ -d /usr/share/glib-2.0/schemas ]; then
+            mkdir -p AppDir/usr/share/glib-2.0
+            cp -a /usr/share/glib-2.0/schemas AppDir/usr/share/glib-2.0/
+            glib-compile-schemas AppDir/usr/share/glib-2.0/schemas || true
+          fi
+
+          # 收集依赖闭包（尽量把运行库打进 AppImage）
+          bundle_closure_deps AppDir/usr/bin
+          if [ -d AppDir/usr/lib/gtk-3.0 ] || [ -d AppDir/usr/lib/gio ] || [ -d AppDir/usr/lib/gdk-pixbuf-2.0 ]; then
+            bundle_closure_deps AppDir/usr/lib
+          fi
+
+          # 让主程序优先加载 AppImage 内库
+          patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib' AppDir/usr/bin/kelivo || true
+
+          # 依赖完整性检查（仅检查明显 not found）
+          MISSING=0
+          while IFS= read -r elf; do
+            if LD_LIBRARY_PATH="$PWD/AppDir/usr/lib:$PWD/AppDir/usr/bin" ldd "$elf" 2>/dev/null | grep -q 'not found'; then
+              echo "❌ Missing deps in: $elf"
+              LD_LIBRARY_PATH="$PWD/AppDir/usr/lib:$PWD/AppDir/usr/bin" ldd "$elf" 2>/dev/null || true
+              MISSING=1
+            fi
+          done < <(list_elf_files AppDir/usr/bin)
+          if [ "$MISSING" -ne 0 ]; then
+            echo "❌ AppDir 仍有未解析依赖"
+            exit 1
+          fi
 
           # 创建 AppRun 脚本
           cat > AppDir/AppRun << 'EOF'
           #!/bin/bash
           SELF=$(readlink -f "$0")
           HERE=${SELF%/*}
+          export APPDIR="${HERE}"
           export PATH="${HERE}/usr/bin:${PATH}"
-          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/bin:${LD_LIBRARY_PATH}"
+          export GSETTINGS_SCHEMA_DIR="${HERE}/usr/share/glib-2.0/schemas"
+          export GIO_MODULE_DIR="${HERE}/usr/lib/gio/modules"
+          export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+          export GTK_EXE_PREFIX="${HERE}/usr"
+          export GTK_DATA_PREFIX="${HERE}/usr"
           exec "${HERE}/usr/bin/kelivo" "$@"
           EOF
           chmod +x AppDir/AppRun
@@ -144,10 +263,26 @@ jobs:
 
           # 调试：输出 AppDir 内 ELF 文件架构
           echo "== ELF files in AppDir =="
-          find AppDir -type f -print0 | xargs -0 file | grep -E 'ELF|executable|shared object' || true
+          find AppDir -type f -print0 | xargs -0r file | grep -E 'ELF|executable|shared object' || true
 
           # 构建 AppImage
           ARCH=arm_aarch64 ./appimagetool AppDir Kelivo_linux_${VERSION}_arm64.AppImage
+
+          # 离线兜底：无 FUSE 启动脚本 + 可直接解压运行包
+          cat > Kelivo_linux_${VERSION}_arm64_run.sh << EOF
+          #!/bin/bash
+          set -e
+          SELF_DIR=\$(cd "\$(dirname "\$0")" && pwd)
+          APP="\${SELF_DIR}/Kelivo_linux_${VERSION}_arm64.AppImage"
+          chmod +x "\${APP}" || true
+          exec "\${APP}" --appimage-extract-and-run "\$@"
+          EOF
+          chmod +x Kelivo_linux_${VERSION}_arm64_run.sh
+
+          rm -rf squashfs-root
+          ./Kelivo_linux_${VERSION}_arm64.AppImage --appimage-extract >/dev/null
+          tar -C squashfs-root -czf Kelivo_linux_${VERSION}_arm64_nofuse.tar.gz .
+          rm -rf squashfs-root
 
       - name: 📦 创建 DEB 包
         run: |
@@ -305,6 +440,8 @@ jobs:
           prerelease: ${{ github.event.inputs.prerelease }}
           files: |
             Kelivo_linux_*_arm64.tar.gz
+            Kelivo_linux_*_arm64_nofuse.tar.gz
+            Kelivo_linux_*_arm64_run.sh
             Kelivo_linux_*_arm64.AppImage
             Kelivo_linux_*_arm64.deb
             Kelivo_linux_*_arm64.rpm
@@ -319,7 +456,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Linux-ARM64-AppImage
-          path: Kelivo_linux_*_arm64.AppImage
+          path: |
+            Kelivo_linux_*_arm64.AppImage
+            Kelivo_linux_*_arm64_nofuse.tar.gz
+            Kelivo_linux_*_arm64_run.sh
 
       - name: 📤 上传构建产物 (DEB)
         uses: actions/upload-artifact@v4
